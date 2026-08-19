@@ -43,3 +43,23 @@ export async function getRecentMessages(geohash) {
     .filter(Boolean)
     .reverse();
 }
+
+export async function getUniqueUserCount(cells) {
+  const members = await Promise.all(
+    cells.map((cell) => redis.smembers(`${MEMBERS_KEY_PREFIX}${cell}`))
+  );
+  return new Set(members.flat()).size;
+}
+
+export async function getRecentMessagesForCells(cells) {
+  const lists = await Promise.all(cells.map((cell) => getRecentMessages(cell)));
+  const byId = new Map();
+  for (const list of lists) {
+    for (const message of list) {
+      if (message && typeof message.id === 'string') {
+        byId.set(message.id, message);
+      }
+    }
+  }
+  return [...byId.values()].sort((a, b) => a.timestamp - b.timestamp);
+}

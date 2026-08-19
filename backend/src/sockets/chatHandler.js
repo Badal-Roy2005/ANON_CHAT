@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import {
   addSocketToRoom,
-  getRecentMessages,
-  getRoomUserCount,
+  getRecentMessagesForCells,
+  getUniqueUserCount,
   removeSocketFromRoom,
   storeMessageInBuffer,
 } from '../controllers/roomController.js';
@@ -10,6 +10,13 @@ import { checkRateLimit } from '../middleware/rateLimiter.js';
 import { getNeighborCells } from '../utils/geohash.js';
 import { sanitizeMessage } from '../utils/moderation.js';
 import { hashIP } from '../utils/security.js';
+
+async function emitUserCounts(io, cells) {
+  const count = await getUniqueUserCount(cells);
+  for (const cell of cells) {
+    io.to(cell).emit('user_count_update', { geohash: cell, count });
+  }
+}
 
 const GEOHASH_REGEX = /^[0123456789bcdefghjkmnpqrstuvwxyz]+$/;
 
@@ -56,11 +63,10 @@ export function registerChatHandlers(io) {
 
         await Promise.all(cells.map((cell) => addSocketToRoom(cell, socket.id)));
 
-        const recentMessages = await getRecentMessages(geohash);
+        const recentMessages = await getRecentMessagesForCells(cells);
         socket.emit('room_history', recentMessages);
 
-        const count = await getRoomUserCount(geohash);
-        io.to(geohash).emit('user_count_update', { geohash, count });
+        await emitUserCounts(io, cells);
       } catch (error) {
         console.error('join_room error:', error.message);
       }
@@ -103,7 +109,7 @@ export function registerChatHandlers(io) {
         };
 
         await storeMessageInBuffer(geohash, message);
-        io.to(geohash).emit('new_message', message);
+        io.to(socket.data.cells || [geohash]).emit('new_message', message);
       } catch (error) {
         console.error('send_message error:', error.message);
       }
@@ -116,10 +122,7 @@ export function registerChatHandlers(io) {
 
         await Promise.all(cells.map((cell) => removeSocketFromRoom(cell, socket.id)));
 
-        for (const cell of cells) {
-          const count = await getRoomUserCount(cell);
-          io.to(cell).emit('user_count_update', { geohash: cell, count });
-        }
+        await emitUserCounts(io, cells);
       } catch (error) {
         console.error('disconnect error:', error.message);
       }
